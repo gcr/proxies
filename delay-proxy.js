@@ -8,7 +8,8 @@ var http = require('http');
 
 var al = new (require('./lib/async_lock.js').AsyncLock)(),
     TIMEOUT=1000 * 30,
-    TIMED_DOMAINS = ['hackerne.ws', 'reddit', 'iamlights', 'bofh.ntk.net'];
+    TIMED_DOMAINS = ['hackerne.ws', 'www.reddit.com', 'iamlights', 'bofh.ntk.net',
+    'qdb.us', 'bash.org', 'meatandsarcasmguy', 'twitter.com'];
 
 function shouldBeTimed(req) {
   if (req.url.indexOf("png") != -1 ||
@@ -28,86 +29,87 @@ function shouldBeTimed(req) {
 
 
 http.createServer(function(proxiedReq, proxiedRes) {
-  // Make the outgoing connection
-  console.log("Waiting...");
-  function serviceRequest(cc, timeout) {
-    // call cc when the page is loaded.
-    // WARNING cc may be called multiple times.
-    var cont = true;
+  function makeReq(cc) {
+    // Make the outgoing connection
+    var waiting = true, queue=[];
+    function processRequest() {
+      if (!waiting) {
+        while (queue.length) {
+          queue.shift()();
+        }
+      }
+    }
+    function serviceRequest(){
+      if (waiting) {
+        waiting = false;
+        processRequest();
+        cc();
+      }
+    }
+    console.log("Got request for "+proxiedReq.headers.host+" : "+proxiedReq.url+"...");
+    delete proxiedReq.headers.connection;
+    var newClient = http.createClient(80, proxiedReq.headers.host),
+        newReq = newClient.request(proxiedReq.method, proxiedReq.url, proxiedReq.headers);
     proxiedReq.connection.setMaxListeners(15);
     proxiedReq.connection.addListener('error', function(error) {
+      console.log(error);
+      console.log(error.stack);
+    });
+    proxiedReq.connection.addListener('end', function(error) {
+      console.log("Canceling request");
+      serviceRequest();
+    });
+
+    newClient.addListener('error', function(error) {
+      console.log(error);
+      console.log(error.stack);
+    });
+
+    newReq.addListener('response', function(newRes) {
+      // when the server (the website the client is browsing to) gives us our
+      // response
+      console.log("Got response");
+
+      newRes.addListener('error', function(error) {
         console.log(error);
         console.log(error.stack);
-        cont=false;
-        cc();
       });
-    proxiedReq.connection.addListener('end', function(error) {
-        console.log("Canceling request");
-        cont=false;
-        cc();
-      });
-    setTimeout(function(){
-      if(!cont) { return; }
-      console.log("Serving request...");
-      delete proxiedReq.headers.connection;
-      var newClient = http.createClient(80, proxiedReq.headers.host),
-          newReq = newClient.request(proxiedReq.method, proxiedReq.url, proxiedReq.headers);
-
-      newClient.addListener('error', function(error) {
-          console.log(error);
-          console.log(error.stack);
-          cc();
-        });
-
-      newReq.addListener('response', function(newRes) {
-          // when the server (the website the client is browsing to) gives us our
-          // response
-
-          newRes.addListener('error', function(error) {
-              console.log(error);
-              console.log(error.stack);
-              cc();
-            });
-          newRes.addListener('data', function(chunk) {
-              proxiedRes.write(chunk, 'binary');
-            });
-          newRes.addListener('end', function() {
-              proxiedRes.end();
-              cc();
-            });
-          // pass headers on to the client
-          proxiedRes.writeHead(newRes.statusCode, newRes.headers);
-        });
-
-      newReq.addListener('data', function(chunk) {
-          // when the client sends data, pass it through
+      newRes.addListener('data', function(chunk) {
+        queue.push(function(){
           proxiedRes.write(chunk, 'binary');
         });
-
-      newReq.addListener('end', function() {
-          // when the client ends, go away
+        processRequest();
+      });
+      newRes.addListener('end', function() {
+        queue.push(function(){
           proxiedRes.end();
-          cc();
         });
+        //if (queue.length == 1) {
+        //  // just in case it's a redirect or something
+        //  serviceRequest();
+        //}
+        processRequest();
+      });
+      // pass headers on to the client
+      proxiedRes.writeHead(newRes.statusCode, newRes.headers);
+      proxiedRes.write('');
+    });
 
-      newReq.end();
-    }, timeout);
+    proxiedReq.addListener('data', function(chunk) {
+      // when the client sends data, pass it through
+      newReq.write(chunk, 'binary');
+    });
+
+    newReq.end();
+
+    return serviceRequest;
   }
 
   if (shouldBeTimed(proxiedReq)) {
-    al.lock(function(unlockReal){
-      console.log("Lock serviced us...");
-      var locked=true;
-      function unlock(){
-        if (locked) {
-          console.log("Unlocked");
-          locked=false;
-          unlockReal();
-        }
-      }
-      serviceRequest(unlock, TIMEOUT);
+    al.lock(function(unlock){
+      setTimeout(makeReq(unlock), TIMEOUT);
     });
   } else {
-    serviceRequest(function(){}, 0);
+    setTimeout(makeReq(function(){}),0);
   }
 }).listen(8080);

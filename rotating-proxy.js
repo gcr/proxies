@@ -10,7 +10,7 @@ var replaces = {
   // Maps strings to items to replace
   '<body': function(){
     // CSS3 transform: rotate & scale by a small amount
-    var effect = (Math.random() < 0.05?
+    var effect = (Math.random() > 0.05?
                      'rotate('+(2*Math.random()-1)+'deg) '
                    : 'rotate('+[90, 180, 270][parseInt(Math.random()*3, 10)]+'deg)') +
                  'scale('+(1 + 0.2*(Math.random()-0.5))+')';
@@ -105,14 +105,14 @@ http.createServer(function(proxiedReq, proxiedRes) {
     proxiedRes.writeHead(newRes.statusCode, newRes.headers);
   });
 
-  newReq.addListener('data', function(chunk) {
+  proxiedReq.addListener('data', function(chunk) {
     // when the client sends data, pass it through
-    proxiedRes.write(chunk, 'binary');
+    newReq.write(chunk, 'binary');
   });
 
-  newReq.addListener('end', function() {
+  proxiedReq.connection.addListener('end', function() {
     // when the client ends, go away
-    proxiedRes.end();
+    newClient.end();
   });
 
   newReq.end();
