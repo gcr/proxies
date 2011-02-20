@@ -23,18 +23,9 @@ function shouldBeTimed(host) {
 http.createServer(function(proxiedReq, proxiedRes) {
   // Make the outgoing connection
   console.log("Waiting...");
-  function serviceRequest(unlockReal, timeout) {
-    console.log("Lock serviced us...");
+  function serviceRequest(cc, timeout) {
     setTimeout(function(){
       console.log("Serving request...");
-      var locked=true;
-      function unlock(){
-        if (locked) {
-          console.log("Unlocked");
-          locked=false;
-          unlockReal();
-        }
-      }
       delete proxiedReq.headers.connection;
       var newClient = http.createClient(80, proxiedReq.headers.host),
           newReq = newClient.request(proxiedReq.method, proxiedReq.url, proxiedReq.headers);
@@ -42,13 +33,13 @@ http.createServer(function(proxiedReq, proxiedRes) {
       newClient.addListener('error', function(error) {
           console.log(error);
           console.log(error.stack);
-          unlock();
+          cc();
         });
       proxiedReq.connection.setMaxListeners(15);
       proxiedReq.connection.addListener('error', function(error) {
           console.log(error);
           console.log(error.stack);
-          unlock();
+          cc();
         });
 
       newReq.addListener('response', function(newRes) {
@@ -58,14 +49,14 @@ http.createServer(function(proxiedReq, proxiedRes) {
           newRes.addListener('error', function(error) {
               console.log(error);
               console.log(error.stack);
-              unlock();
+              cc();
             });
           newRes.addListener('data', function(chunk) {
               proxiedRes.write(chunk, 'binary');
             });
           newRes.addListener('end', function() {
               proxiedRes.end();
-              unlock();
+              cc();
             });
           // pass headers on to the client
           proxiedRes.writeHead(newRes.statusCode, newRes.headers);
@@ -79,14 +70,25 @@ http.createServer(function(proxiedReq, proxiedRes) {
       newReq.addListener('end', function() {
           // when the client ends, go away
           proxiedRes.end();
-          unlock();
+          cc();
         });
 
       newReq.end();
     }, timeout);
   }
   if (shouldBeTimed(proxiedReq.headers.host)) {
-    al.lock(function(ul){ serviceRequest(ul, TIMEOUT); });
+    al.lock(function(unlockReal){
+      console.log("Lock serviced us...");
+      var locked=true;
+      function unlock(){
+        if (locked) {
+          console.log("Unlocked");
+          locked=false;
+          unlockReal();
+        }
+      }
+      serviceRequest(unlock, TIMEOUT);
+    });
   } else {
     serviceRequest(function(){}, 0);
   }
