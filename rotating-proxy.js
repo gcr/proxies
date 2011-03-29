@@ -45,12 +45,37 @@ var replaces = {
   }
 };
 
+function fixHeaders(oldHeaders) {
+  // node does something STUPID in that incoming headers will be all lowercased
+  // but outgoing headers will not have their case affected so I have to fix
+  // them here.
+  // Return a new hash of HTTP headers such that each header name (key) in this
+  // hash has the proper case. This will not work for the "TE" header, see
+  // http://en.wikipedia.org/wiki/List_of_HTTP_header_fields
+  var result = {};
+  for (var header in oldHeaders) {
+    if (oldHeaders.hasOwnProperty(header)) {(function(){
+      // this is jslint's idea of "code style" ^ ^ ^
+      // (personally, I think this entire function is full of fail. thanks,
+      // node. thanks, jslint.)
+      header = header.split('-')
+                     .map(function(header){ return header[0].toUpperCase()+header.slice(1); })
+                     .join('-');
+      result[header] = oldHeaders[header.toLowerCase()];
+    }());}
+  }
+  return result;
+}
+
 http.createServer(function(proxiedReq, proxiedRes) {
   // when clients send us requests
   delete proxiedReq.headers['accept-encoding']; // turn off gzip
   // make the outgoing connection
   var newClient = http.createClient(80, proxiedReq.headers.host),
-      newReq = newClient.request(proxiedReq.method, proxiedReq.url, proxiedReq.headers);
+      newReq = newClient.request(proxiedReq.method, proxiedReq.url, fixHeaders(proxiedReq.headers));
+
+  console.log("Request:");
+  console.log(proxiedReq.headers);
 
   newClient.addListener('error', function(error) {
     console.log(error);
@@ -62,10 +87,25 @@ http.createServer(function(proxiedReq, proxiedRes) {
     console.log(error.stack);
   });
 
+  proxiedReq.addListener('data', function(chunk) {
+    // when the client sends data, pass it through
+    newReq.write(chunk, 'binary');
+    console.log("Data");
+    console.log(chunk.toString());
+  });
+
+  proxiedReq.connection.addListener('end', function() {
+    // when the client ends, go away
+    console.log("Client closed connection");
+    newClient.end();
+  });
+
   newReq.addListener('response', function(newRes) {
     // when the server (the website the client is browsing to) gives us our
     // response
 
+    console.log("Response:");
+    console.log(newRes.headers);
     // is this an HTML page? we should only replace HTML pages.
     var html=(newRes.headers['content-type'] && 
               newRes.headers['content-type']
@@ -77,6 +117,8 @@ http.createServer(function(proxiedReq, proxiedRes) {
       console.log(error.stack);
     });
     newRes.addListener('data', function(chunk) {
+      console.log("Server data");
+      console.log(chunk.toString());
       if (html) {
         // potentially store in a string and rewrite
         buffer += chunk.toString('utf-8'); // <-- TODO coercing to a string is the wrong thing to do
@@ -86,6 +128,7 @@ http.createServer(function(proxiedReq, proxiedRes) {
       }
     });
     newRes.addListener('end', function() {
+      console.log("Server closed connection");
       if (html) {
         for (var key in replaces) {
           if (replaces.hasOwnProperty(key)) {
@@ -105,15 +148,8 @@ http.createServer(function(proxiedReq, proxiedRes) {
     proxiedRes.writeHead(newRes.statusCode, newRes.headers);
   });
 
-  proxiedReq.addListener('data', function(chunk) {
-    // when the client sends data, pass it through
-    newReq.write(chunk, 'binary');
-  });
 
-  proxiedReq.connection.addListener('end', function() {
-    // when the client ends, go away
-    newClient.end();
-  });
-
-  newReq.end();
+  if (proxiedReq.method != 'POST') {
+    newReq.end();
+  }
 }).listen(8080);
