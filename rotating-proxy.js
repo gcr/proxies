@@ -74,9 +74,6 @@ http.createServer(function(proxiedReq, proxiedRes) {
   var newClient = http.createClient(80, proxiedReq.headers.host),
       newReq = newClient.request(proxiedReq.method, proxiedReq.url, fixHeaders(proxiedReq.headers));
 
-  console.log("Request:");
-  console.log(proxiedReq.headers);
-
   newClient.addListener('error', function(error) {
     console.log(error);
     console.log(error.stack);
@@ -90,13 +87,10 @@ http.createServer(function(proxiedReq, proxiedRes) {
   proxiedReq.addListener('data', function(chunk) {
     // when the client sends data, pass it through
     newReq.write(chunk, 'binary');
-    console.log("Data");
-    console.log(chunk.toString());
   });
 
   proxiedReq.connection.addListener('end', function() {
     // when the client ends, go away
-    console.log("Client closed connection");
     newClient.end();
   });
 
@@ -104,8 +98,6 @@ http.createServer(function(proxiedReq, proxiedRes) {
     // when the server (the website the client is browsing to) gives us our
     // response
 
-    console.log("Response:");
-    console.log(newRes.headers);
     // is this an HTML page? we should only replace HTML pages.
     var html=(newRes.headers['content-type'] && 
               newRes.headers['content-type']
@@ -117,8 +109,6 @@ http.createServer(function(proxiedReq, proxiedRes) {
       console.log(error.stack);
     });
     newRes.addListener('data', function(chunk) {
-      console.log("Server data");
-      console.log(chunk.toString());
       if (html) {
         // potentially store in a string and rewrite
         buffer += chunk.toString('utf-8'); // <-- TODO coercing to a string is the wrong thing to do
@@ -128,7 +118,6 @@ http.createServer(function(proxiedReq, proxiedRes) {
       }
     });
     newRes.addListener('end', function() {
-      console.log("Server closed connection");
       if (html) {
         for (var key in replaces) {
           if (replaces.hasOwnProperty(key)) {
